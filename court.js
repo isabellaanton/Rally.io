@@ -1,38 +1,86 @@
 /**
- * Rally.io — Court Renderer
- * Top-down 2D court with net, lines, and player tokens.
+ * Rally.io — Court Renderer (Fully 3D Perspective)
+ * Renders a 3D tennis court on a 2D canvas using custom perspective projection.
  * Written as a standalone ES-style module (IIFE for compatibility).
  */
 
 const CourtRenderer = (() => {
-  // ── Constants ────────────────────────────────────────────────
+  // ── Canvas Constants ─────────────────────────────────────────
   const W = 320, H = 520;
 
-  // Court dimensions as fractions of canvas size
-  const CX = W / 2;
+  // ── 3D Camera & Scene Configuration ──────────────────────────
+  // World space dimensions for the court layout
+  const COURT_HALF_WIDTH = 2.3;   // Total doubles width is 4.6 units
+  const COURT_HALF_LENGTH = 7.5;  // Total length is 15.0 units (-7.5 to +7.5)
+  const SINGLES_HALF_WIDTH = COURT_HALF_WIDTH * 0.82; // Inset singles lines
 
-  // Court rectangle in pixels
-  const COURT = {
-    left:   W * 0.08,
-    right:  W * 0.92,
-    top:    H * 0.04,
-    bottom: H * 0.96,
-  };
-  COURT.width  = COURT.right - COURT.left;
-  COURT.height = COURT.bottom - COURT.top;
+  // Camera settings (Positioned behind player looking toward opponent)
+  const CAM_Y = 4.8;        // Camera altitude/height above the floor
+  const CAM_Z = 11.5;       // Camera depth distance behind the baseline
+  const PITCH = 0.32;       // Angle looking down down the court (in radians)
+  const FOV = 280;          // Field of view / focal projection factor
+  const HORIZON_Y = H * 0.38; // Vertical screen position of the horizon line
 
-  // Service boxes (as fraction of court height from top/bottom)
-  const SERVICE_DEPTH = 0.335; // service line is 33.5% from each baseline
+  // ── 3D Perspective Projection Function ───────────────────────
+  /**
+   * Projects 3D World coordinates (wx, wy, wz) into 2D screen coordinates.
+   * wx: Left (-) to Right (+)
+   * wy: Ground level (0) to Sky (+)
+   * wz: Opponent side (-) to Player side (+)
+   */
+  function project(wx, wy, wz) {
+    const dx = wx;
+    const dy = wy - CAM_Y;
+    const dz = wz - CAM_Z;
 
-  // Net is at vertical center
-  const NET_Y = COURT.top + COURT.height * 0.5;
+    const cosP = Math.cos(PITCH);
+    const sinP = Math.sin(PITCH);
 
-  // Center service line x
-  const CENTER_X = CX;
+    // Transform along pitch rotation
+    const ty = dy * cosP - dz * sinP;
+    const tz = dy * sinP + dz * cosP;
 
-  // Alley lines (doubles sidelines already = COURT edges; singles sidelines inset)
-  const SINGLES_LEFT  = COURT.left  + COURT.width * 0.09;
-  const SINGLES_RIGHT = COURT.right - COURT.width * 0.09;
+    // Depth inversion for screen rendering
+    const depth = -tz;
+    if (depth <= 0.1) return { x: W / 2, y: H / 2, scale: 1, visible: false };
+
+    const screenX = W / 2 + (dx * FOV) / depth;
+    const screenY = HORIZON_Y - (ty * FOV) / depth;
+    const scale = FOV / depth;
+
+    return { x: screenX, y: screenY, scale: scale, visible: true };
+  }
+
+  // ── 3D Drawing Utilities ─────────────────────────────────────
+  function line3D(ctx, wx1, wy1, wz1, wx2, wy2, wz2) {
+    const p1 = project(wx1, wy1, wz1);
+    const p2 = project(wx2, wy2, wz2);
+    if (p1.visible && p2.visible) {
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
+  }
+
+  function poly3D(ctx, points, fillStyle) {
+    ctx.beginPath();
+    let first = true;
+    for (const pt of points) {
+      const p = project(pt[0], pt[1], pt[2]);
+      if (first) {
+        ctx.moveTo(p.x, p.y);
+        first = false;
+      } else {
+        ctx.lineTo(p.x, p.y);
+      }
+    }
+    ctx.closePath();
+    if (fillStyle) {
+      ctx.fillStyle = fillStyle;
+      ctx.fill();
+    }
+  }
 
   // ── Surface palettes ─────────────────────────────────────────
   function getPalette(surfaceId, dark) {
@@ -58,153 +106,166 @@ const CourtRenderer = (() => {
     ctx.fillStyle = pal.out;
     ctx.fillRect(0, 0, W, H);
 
-    // Court surface
-    ctx.fillStyle = pal.court;
-    ctx.fillRect(COURT.left, COURT.top, COURT.width, COURT.height);
+    // 3D Court Main Surface Plane
+    const courtCorners = [
+      [-COURT_HALF_WIDTH, 0, -COURT_HALF_LENGTH],
+      [ COURT_HALF_WIDTH, 0, -COURT_HALF_LENGTH],
+      [ COURT_HALF_WIDTH, 0,  COURT_HALF_LENGTH],
+      [-COURT_HALF_WIDTH, 0,  COURT_HALF_LENGTH]
+    ];
+    poly3D(ctx, courtCorners, pal.court);
 
-    // Subtle court texture lines (horizontal streaks on hard)
+    // 3D Perspective Court Textures
     if (surfaceId === 'hard') {
       ctx.save();
       ctx.globalAlpha = 0.04;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1;
-      for (let y = COURT.top; y < COURT.bottom; y += 6) {
-        ctx.beginPath();
-        ctx.moveTo(COURT.left, y);
-        ctx.lineTo(COURT.right, y);
-        ctx.stroke();
+      for (let wz = -COURT_HALF_LENGTH; wz <= COURT_HALF_LENGTH; wz += 0.3) {
+        line3D(ctx, -COURT_HALF_WIDTH, 0, wz, COURT_HALF_WIDTH, 0, wz);
       }
       ctx.restore();
     }
 
-    // Subtle clay drag marks
     if (surfaceId === 'clay') {
       ctx.save();
       ctx.globalAlpha = 0.06;
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 2;
-      for (let y = COURT.top + 10; y < COURT.bottom; y += 14) {
-        ctx.beginPath();
-        ctx.moveTo(COURT.left + 4, y);
-        ctx.lineTo(COURT.right - 4, y + 2);
-        ctx.stroke();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1.5;
+      for (let wz = -COURT_HALF_LENGTH + 0.2; wz <= COURT_HALF_LENGTH; wz += 0.5) {
+        line3D(ctx, -COURT_HALF_WIDTH + 0.1, 0, wz, COURT_HALF_WIDTH - 0.1, 0, wz + 0.04);
       }
       ctx.restore();
     }
 
-    // ── Court lines ──────────────────────────────────────────
+    // ── 3D Court Lines ──────────────────────────────────────────
     ctx.strokeStyle = pal.line;
 
-    // Outer boundary (full doubles)
+    // Outer boundary line (Doubles perimeter)
     ctx.lineWidth = 2.5;
-    ctx.strokeRect(COURT.left, COURT.top, COURT.width, COURT.height);
+    line3D(ctx, -COURT_HALF_WIDTH, 0, -COURT_HALF_LENGTH,  COURT_HALF_WIDTH, 0, -COURT_HALF_LENGTH);
+    line3D(ctx,  COURT_HALF_WIDTH, 0, -COURT_HALF_LENGTH,  COURT_HALF_WIDTH, 0,  COURT_HALF_LENGTH);
+    line3D(ctx,  COURT_HALF_WIDTH, 0,  COURT_HALF_LENGTH, -COURT_HALF_WIDTH, 0,  COURT_HALF_LENGTH);
+    line3D(ctx, -COURT_HALF_WIDTH, 0,  COURT_HALF_LENGTH, -COURT_HALF_WIDTH, 0, -COURT_HALF_LENGTH);
 
-    // Singles sidelines
+    // Singles lines
     ctx.lineWidth = 1.5;
-    line(ctx, SINGLES_LEFT,  COURT.top,    SINGLES_LEFT,  COURT.bottom);
-    line(ctx, SINGLES_RIGHT, COURT.top,    SINGLES_RIGHT, COURT.bottom);
+    line3D(ctx, -SINGLES_HALF_WIDTH, 0, -COURT_HALF_LENGTH, -SINGLES_HALF_WIDTH, 0,  COURT_HALF_LENGTH);
+    line3D(ctx,  SINGLES_HALF_WIDTH, 0, -COURT_HALF_LENGTH,  SINGLES_HALF_WIDTH, 0,  COURT_HALF_LENGTH);
 
-    // Service lines — top half
-    const topSvcY = COURT.top + COURT.height * SERVICE_DEPTH;
-    line(ctx, SINGLES_LEFT, topSvcY, SINGLES_RIGHT, topSvcY);
+    // Service Lines (33.5% from baselines)
+    const serviceZ = COURT_HALF_LENGTH - (COURT_HALF_LENGTH * 2 * 0.335); // 2.475 units away from center net
+    line3D(ctx, -SINGLES_HALF_WIDTH, 0, -serviceZ, SINGLES_HALF_WIDTH, 0, -serviceZ);
+    line3D(ctx, -SINGLES_HALF_WIDTH, 0,  serviceZ, SINGLES_HALF_WIDTH, 0,  serviceZ);
 
-    // Service lines — bottom half
-    const botSvcY = COURT.bottom - COURT.height * SERVICE_DEPTH;
-    line(ctx, SINGLES_LEFT, botSvcY, SINGLES_RIGHT, botSvcY);
+    // Center Service Lines
+    line3D(ctx, 0, 0, -serviceZ, 0, 0, 0);
+    line3D(ctx, 0, 0,  serviceZ, 0, 0, 0);
 
-    // Center service line (top box)
-    line(ctx, CENTER_X, COURT.top, CENTER_X, topSvcY);
+    // Center baseline marks (ticks)
+    line3D(ctx, 0, 0, -COURT_HALF_LENGTH, 0, 0, -COURT_HALF_LENGTH + 0.3);
+    line3D(ctx, 0, 0,  COURT_HALF_LENGTH, 0, 0,  COURT_HALF_LENGTH - 0.3);
 
-    // Center service line (bottom box)
-    line(ctx, CENTER_X, botSvcY, CENTER_X, COURT.bottom);
+    // ── 3D Net ──────────────────────────────────────────────────
+    const NET_W = COURT_HALF_WIDTH + 0.25;
+    const NET_H = 0.55; // Vertical physical height of net mesh
 
-    // Center mark at each baseline (tiny tick)
-    ctx.lineWidth = 1.5;
-    line(ctx, CENTER_X, COURT.top,    CENTER_X, COURT.top    + 8);
-    line(ctx, CENTER_X, COURT.bottom, CENTER_X, COURT.bottom - 8);
-
-    // ── Net ──────────────────────────────────────────────────
-    // Net shadow
+    // Net Shadow on floor
     ctx.save();
-    ctx.globalAlpha = 0.25;
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 10;
-    line(ctx, COURT.left - 4, NET_Y + 3, COURT.right + 4, NET_Y + 3);
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 6;
+    line3D(ctx, -NET_W, 0, 0.05, NET_W, 0, 0.05);
     ctx.restore();
 
-    // Net posts
-    ctx.fillStyle = pal.post;
-    ctx.beginPath();
-    ctx.arc(COURT.left - 3, NET_Y, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(COURT.right + 3, NET_Y, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Net body — mesh look
+    // Net Body Mesh
     ctx.save();
     ctx.strokeStyle = pal.net;
-    ctx.lineWidth = 4;
-    line(ctx, COURT.left - 3, NET_Y, COURT.right + 3, NET_Y);
-
-    // Net mesh verticals
-    ctx.lineWidth = 0.7;
-    ctx.globalAlpha = 0.45;
-    const meshStep = COURT.width / 18;
-    for (let x = COURT.left; x <= COURT.right; x += meshStep) {
-      line(ctx, x, NET_Y - 7, x, NET_Y + 7);
+    ctx.lineWidth = 2.5;
+    
+    // Simple vertical strings mesh approximation
+    ctx.globalAlpha = 0.4;
+    ctx.lineWidth = 0.8;
+    for (let wx = -NET_W; wx <= NET_W; wx += 0.25) {
+      line3D(ctx, wx, 0, 0, wx, NET_H, 0);
     }
-    // Net top white band
-    ctx.globalAlpha = 1;
+
+    // Top White Band Line
+    ctx.globalAlpha = 1.0;
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    line(ctx, COURT.left - 3, NET_Y - 7, COURT.right + 3, NET_Y - 7);
+    ctx.lineWidth = 2.0;
+    line3D(ctx, -NET_W, NET_H, 0, NET_W, NET_H, 0);
     ctx.restore();
 
-    // ── Side labels ───────────────────────────────────────────
+    // Net Posts
+    ctx.fillStyle = pal.post;
+    const postLeft = project(-NET_W, 0, 0);
+    const postRight = project(NET_W, 0, 0);
+    
+    if (postLeft.visible) {
+      ctx.beginPath();
+      ctx.arc(postLeft.x, postLeft.y - (NET_H * postLeft.scale), 3.5 * (postLeft.scale / 25), 0, Math.PI * 2);
+      ctx.fill();
+      line3D(ctx, -NET_W, 0, 0, -NET_W, NET_H + 0.05, 0);
+    }
+    if (postRight.visible) {
+      ctx.beginPath();
+      ctx.arc(postRight.x, postRight.y - (NET_H * postRight.scale), 3.5 * (postRight.scale / 25), 0, Math.PI * 2);
+      ctx.fill();
+      line3D(ctx, NET_W, 0, 0, NET_W, NET_H + 0.05, 0);
+    }
+
+    // ── Side Labels ───────────────────────────────────────────
     ctx.save();
     ctx.font = 'bold 10px "Bebas Neue", monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.textAlign = 'center';
-    ctx.fillText('OPONENTE', CENTER_X, COURT.top + 20);
-    ctx.fillText('VOCÊ',     CENTER_X, COURT.bottom - 10);
+    
+    const labelOpp = project(0, 0, -COURT_HALF_LENGTH - 0.6);
+    if (labelOpp.visible) ctx.fillText('OPONENTE', labelOpp.x, labelOpp.y);
+
+    const labelYou = project(0, 0, COURT_HALF_LENGTH + 0.6);
+    if (labelYou.visible) ctx.fillText('VOCÊ', labelYou.x, labelYou.y);
     ctx.restore();
 
     // ── Vignette ─────────────────────────────────────────────
-    const vig = ctx.createRadialGradient(CX, H * 0.5, H * 0.1, CX, H * 0.5, H * 0.6);
+    const vig = ctx.createRadialGradient(W / 2, H * 0.5, H * 0.1, W / 2, H * 0.5, H * 0.6);
     vig.addColorStop(0, 'rgba(0,0,0,0)');
     vig.addColorStop(1, dark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.18)');
     ctx.fillStyle = vig;
     ctx.fillRect(0, 0, W, H);
   }
 
-  function line(ctx, x1, y1, x2, y2) {
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-  }
-
   // ── Token positioning helpers ─────────────────────────────
   /**
-   * Convert normalized court position (0..1 x, 0..1 z where 0=opp side, 1=player side)
-   * to pixel coordinates on the canvas.
+   * Convert normalized court position (0..1 x, 0..1 z) to screen space pixels.
+   * Leverages 3D mapping formulas to feed elements into the projection engine.
    */
-  function courtToPixel(normX, normZ) {
-    const x = COURT.left + normX * COURT.width;
-    const y = COURT.top  + (1 - normZ) * COURT.height;
-    return { x, y };
+  function courtToPixel(normX, normZ, normY = 0) {
+    const wx = (normX - 0.5) * (COURT_HALF_WIDTH * 2);
+    const wz = -COURT_HALF_LENGTH + normZ * (COURT_HALF_LENGTH * 2);
+    const wy = normY; // Explicit physical height injection (e.g. Ball arc)
+
+    const projected = project(wx, wy, wz);
+    return { x: projected.x, y: projected.y, scale: projected.scale };
   }
 
   /**
-   * Convert canvas pixel to CSS offset for overlaid DOM token.
+   * Convert canvas pixel and depth-scale into responsive CSS offsets for DOM tokens.
    */
-  function pixelToTokenCSS(px, py, wrapEl, tokenRadius) {
+  function pixelToTokenCSS(px, py, wrapEl, tokenRadius, scale = 25) {
     const scaleX = wrapEl.offsetWidth  / W;
     const scaleY = wrapEl.offsetHeight / H;
+    
+    // Scale size dynamically based on perspective distance multiplier
+    const sizeMultiplier = Math.max(0.4, Math.min(2.5, scale / 25));
+    const dynamicRadius = tokenRadius * sizeMultiplier;
+
     return {
-      left: px * scaleX - tokenRadius,
-      top:  py * scaleY - tokenRadius,
+      left: px * scaleX - dynamicRadius,
+      top:  py * scaleY - dynamicRadius,
+      width: dynamicRadius * 2,
+      height: dynamicRadius * 2
     };
   }
 
