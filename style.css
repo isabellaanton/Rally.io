@@ -275,6 +275,13 @@ body.dark .phase-end   { color:#fbbf24; }
   backdrop-filter:blur(6px);z-index:100;
   display:flex;align-items:center;justify-content:center;padding:1rem;
 }
+/* Regra própria de .hidden: antes isso só existia via CDN do Tailwind.
+   Se o CDN falhar/atrasar/for bloqueado, todo .modal-overlay (incluindo
+   match-over-screen) fica visível por padrão e intercepta cliques por
+   cima da quadra. !important garante prioridade sobre .modal-overlay. */
+.hidden {
+  display:none !important;
+}
 .modal-box {
   background:var(--modal-bg);border:1px solid var(--modal-border);border-radius:18px;
   width:100%;box-shadow:0 25px 50px -12px rgba(0,0,0,.2);
@@ -445,19 +452,7 @@ body.dark .surface-label-grass { color:#4ade80; }
 #over-score { color:var(--over-score-color); }
 .modal-divider { border:none; border-top:1px solid var(--divider); margin:4px 0; }
 
-/* ── Court canvas area ──────────────────────────────────────── */
-#court-3d-wrap {
-  position: relative;
-  width: 160px;
-  flex-shrink: 0;
-}
-#court-3d-canvas {
-  display: block;
-  width: 160px;
-  height: 260px;
-  border-radius: 8px;
-  overflow: hidden;
-}
+
 
 /* ── Player tokens on court ─────────────────────────────────── */
 .court-token {
@@ -496,4 +491,71 @@ body.dark .surface-label-grass { color:#4ade80; }
   #modal-start .modal-box, #modal-select-opponent .modal-box { max-width:100%; }
   #court-3d-canvas { width:120px; height:200px; }
   #court-3d-wrap   { width:120px; }
+}
+.token-ball {
+  width:11px; height:11px; 
+  background:#ccff00; 
+  border:1.5px solid #84cc16; 
+  z-index:6;
+  border-radius:50%; 
+  position:absolute;
+  box-shadow:0 0 12px rgba(204,255,0,.9);
+  transition: none; /* Controlado por JS agora */
+  will-change: left, top, transform;
+}
+
+/* Efeitos extras de quique */
+.bounce {
+  animation: ballBounce 0.35s ease-in-out;
+}
+@keyframes ballBounce {
+  0%, 100% { transform: scaleY(0.7) scaleX(1.1); }
+  50% { transform: scaleY(1.25) scaleX(0.9); }
+}
+.token-ball {
+  transition: none !important; /* Controlado pelo requestAnimationFrame */
+  will-change: left, top, width, height, transform;
+}
+
+.token-ball.bounce {
+  animation: ballBounce 180ms ease-in-out;
+}
+
+@keyframes ballBounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scaleY(1.35) scaleX(0.85); }
+}
+
+#court-3d-wrap {
+  position: relative;
+  width: 315px;
+  flex-shrink: 0;
+}
+#court-3d-canvas {
+  display: block;
+  width: 315px;
+  height: 450px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+}
+
+/* Reduz altura do fundo (narração + painel) */
+#battle-field {
+  gap: 10px;
+  padding: 12px;
+}
+#match-log {
+  max-height: 140px;   /* Reduz altura da narração */
+}
+#shot-panel {
+  padding: 12px 16px 16px;
+}
+#shot-cards {
+  gap: 8px;
+}
+
+@media(max-width:640px){
+  #court-3d-wrap { width: 240px; }
+  #court-3d-canvas { width: 240px; height: 340px; }
+  #match-log { max-height: 110px; }
 }

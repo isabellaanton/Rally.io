@@ -1,6 +1,6 @@
 // ============================================================
-//  Rally.io — UI Controller (Versão Completa 3D + Animações)
-//  Depende de: players.js, game.js, court.js
+//  Rally.io — UI Controller (Versão Completa + Multilíngue)
+//  Depende de: players.js, game.js, court.js, translations.js
 // ============================================================
 
 let engine              = null;
@@ -9,6 +9,21 @@ let selectedPlayerCfg   = null;
 let selectedOpponentCfg = null;
 let selectedSurface     = 'hard';
 let gamePaused          = false;
+
+// Language System
+// currentLang, t() e updateAllTexts() já vêm de translations.js (carregado antes deste arquivo no <head>).
+// Aqui só expomos window.setLanguage, que é o que o HTML chama via onchange/onclick.
+window.setLanguage = function(lang) {
+  if (TRANSLATIONS && TRANSLATIONS[lang]) {
+    currentLang = lang;
+    localStorage.setItem('tennisRPG_lang', lang);
+    updateAllTexts();
+
+    // Atualiza o seletor de idioma do HTML
+    const langSelect = document.getElementById('lang-select');
+    if (langSelect) langSelect.value = lang;
+  }
+};
 
 // ─── THEME ────────────────────────────────────────────────────
 function applyTheme(dark) {
@@ -54,6 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-close-tutorial')?.addEventListener('click', () => {
     hideModal('modal-tutorial');
   });
+
+  updateAllTexts();   // ← Importante
 
   const saved = MatchEngine.load();
   if (saved && !saved.matchOver) {
@@ -117,7 +134,6 @@ function prepareMyPlayer() {
       id: 'myplayer_1', name: playerName, fullName: playerName,
       country: '🌎', gender: 'M', style: 'Jogador Customizado (Nível 1)',
       playstyle: 'all_court',
-      level: 1, xp: 0,
       serve: 65, return: 65, forehand: 65, backhand: 65,
       volley: 60, speed: 70, stamina: 70, mental: 65,
       aiWeights: {}
@@ -126,7 +142,6 @@ function prepareMyPlayer() {
   } else {
     myPlayerConfig.name = playerName;
     myPlayerConfig.fullName = playerName;
-    myPlayerConfig.style = `Jogador Customizado (Nível ${myPlayerConfig.level})`;
   }
 
   const existingIndex = MALE_PLAYERS.findIndex(p => p.id === 'myplayer_1');
@@ -154,7 +169,7 @@ function confirmName() {
   showModal('modal-start');
 }
 
-// ─── PLAYER GRID ──────────────────────────────────────────────
+// ─── PLAYER / OPPONENT GRID ───────────────────────────────────
 function renderPlayerSelectGrid() {
   const gridM = document.getElementById('player-grid-male');
   const gridF = document.getElementById('player-grid-female');
@@ -206,7 +221,6 @@ document.getElementById('btn-next-opponent')?.addEventListener('click', () => {
   showModal('modal-select-opponent');
 });
 
-// ─── OPPONENT GRID ────────────────────────────────────────────
 function renderOpponentGrid() {
   const gridM = document.getElementById('opp-grid-male');
   const gridF = document.getElementById('opp-grid-female');
@@ -255,13 +269,11 @@ function startMatch() {
   
   updateAIThinkingLabel();
   setSurfaceTheme(selectedSurface);
-  
   hideModal('modal-select-opponent');
   
-  // Limpa o log e inicia
   const logContainer = document.getElementById('match-log');
   if (logContainer) logContainer.innerHTML = '';
-  addLog(`Partida iniciada! ${p1.name} vs ${p2.name} na superfície ${SURFACES[selectedSurface].name}.`, 'system');
+  addLog(`Partida iniciada! ${p1.name} vs ${p2.name}`, 'system');
   
   updateUI();
   resetTokens();
@@ -269,11 +281,8 @@ function startMatch() {
   engine.save();
 
   const human = engine.players[engine.humanIndex];
-  if (engine.server === human) {
-    showCards();
-  } else {
-    triggerAITurn();
-  }
+  if (engine.server === human) showCards();
+  else triggerAITurn();
 }
 
 function updateAIThinkingLabel() {
@@ -282,61 +291,45 @@ function updateAIThinkingLabel() {
   if (lbl) lbl.textContent = `${opp.name} pensando...`;
 }
 
-// ─── GAMEPLAY LOOP E ANIMAÇÃO DA BOLA ─────────────────────────
+// ─── GAMEPLAY + ANIMAÇÃO DA BOLA ──────────────────────────────
 function handlePlayerShot(shotId) {
   if (!engine || engine.matchOver || gamePaused) return;
-
-  const human = engine.players[engine.humanIndex];
-  const ai    = engine.players[1 - engine.humanIndex];
-  
-  const isHumanTurn = (engine.phase === 'serve') 
-    ? (engine.server === human) 
-    : (engine.rallyCount % 2 === (engine.server === human ? 0 : 1));
-
-  if (!isHumanTurn) return;
-
   hideCards();
-  spawnHitEffect('token-p1'); // Efeito de batida no jogador base
-  
-  // Anima a bola do seu jogador (token-p1) para o oponente (token-p2)
+  spawnHitEffect('token-p1');
+  styleBallForShot(shotId);
+
   animateBall('token-p1', 'token-p2', () => {
-    engine.executeShot(shotId);
+    const result = engine.executeShot(shotId);
+    if (result) styleBallForOutcome(result.outcome);
     updateUI();
     redrawCourt();
 
-    if (!engine.matchOver && engine.phase !== 'serve' && engine.phase !== 'point_end') {
-      const isAITurn = (engine.rallyCount % 2 === (engine.server === ai ? 0 : 1));
-      if (isAITurn) triggerAITurn();
+    if (!engine.matchOver && engine.phase !== 'point_end' && engine.phase !== 'serve') {
+      triggerAITurn();
     }
   });
 }
 
 function triggerAITurn() {
   if (!engine || engine.matchOver) return;
-  const ai = engine.players[1 - engine.humanIndex];
-  
   document.getElementById('ai-thinking-box')?.classList.remove('hidden');
   
   setTimeout(() => {
     document.getElementById('ai-thinking-box')?.classList.add('hidden');
-    
-    // Corrigido para acessar o método real do motor
-    const aiShotId = engine.aiPickShot(); 
+    const aiShotId = engine.aiPickShot();
     spawnHitEffect('token-p2');
-    
-    // Anima a bola do oponente (token-p2) para você (token-p1)
+    styleBallForShot(aiShotId);
+
     animateBall('token-p2', 'token-p1', () => {
-      engine.executeShot(aiShotId);
+      const result = engine.executeShot(aiShotId);
+      if (result) styleBallForOutcome(result.outcome);
       updateUI();
       redrawCourt();
-      
-      if (!engine.matchOver && engine.phase !== 'serve' && engine.phase !== 'point_end') {
-        const human = engine.players[engine.humanIndex];
-        const isHumanTurnNext = (engine.rallyCount % 2 === (engine.server === human ? 0 : 1));
-        if (isHumanTurnNext) showCards();
+      if (!engine.matchOver && engine.phase !== 'point_end' && engine.phase !== 'serve') {
+        showCards();
       }
     });
-  }, 1000 + Math.random() * 800);
+  }, 900);
 }
 
 document.getElementById('btn-continue')?.addEventListener('click', () => {
@@ -346,42 +339,30 @@ document.getElementById('btn-continue')?.addEventListener('click', () => {
     skipToPlayerSelect();
     return;
   }
-  
   document.getElementById('btn-continue').classList.add('hidden');
-  
-  const human = engine.players[engine.humanIndex];
-  const isHumanServe = (engine.server === human);
-  
   resetTokens();
   updateUI();
   redrawCourt();
 
-  if (isHumanServe) {
-    showCards();
-  } else {
-    triggerAITurn();
-  }
+  const human = engine.players[engine.humanIndex];
+  if (engine.server === human) showCards();
+  else triggerAITurn();
 });
 
-// ─── LÓGICA DE RENDERIZAÇÃO DA QUADRA E TOKENS ────────────────
-
+// ─── COURT & TOKENS ───────────────────────────────────────────
 function redrawCourt() {
   const canvas = document.getElementById('court-3d-canvas');
   if (!canvas || !engine) return;
-  
   const isDark = document.body.classList.contains('dark');
   CourtRenderer.draw(canvas, selectedSurface, isDark);
-  
+
   const wrap = document.getElementById('court-3d-wrap');
   const human = engine.players[engine.humanIndex];
   const ai = engine.players[1 - engine.humanIndex];
 
-  // Define a profundidade Z do modelo com base na posição
-  // normZ 0 = Fundo do Oponente, 0.5 = Rede, 1 = Fundo do Jogador
   const p1NormZ = human.position === 'net' ? 0.6 : 0.95;
   const p2NormZ = ai.position === 'net' ? 0.4 : 0.05;
 
-  // Usa CourtRenderer para traduzir do 3D para o plano 2D CSS
   const p1Px = CourtRenderer.courtToPixel(0.5, p1NormZ);
   const p2Px = CourtRenderer.courtToPixel(0.5, p2NormZ);
 
@@ -397,32 +378,19 @@ function applyTokenCSS(id, pos, wrap, baseRadius, scale) {
   el.style.top = css.top + 'px';
   el.style.width = css.width + 'px';
   el.style.height = css.height + 'px';
-  
-  // Aumenta a fonte e zIndex baseados na profundidade da câmera
-  el.style.fontSize = Math.max(5, css.width * 0.3) + 'px';
-  el.style.zIndex = Math.round(scale * 10);
 }
 
 function resetTokens() {
   const wrap = document.getElementById('court-3d-wrap');
   const human = engine.players[engine.humanIndex];
   const isHumanServe = engine.server === human;
-  
   const p1NormZ = human.position === 'net' ? 0.6 : 0.95;
-  const p2NormZ = engine.players[1 - engine.humanIndex].position === 'net' ? 0.4 : 0.05;
-
-  const servePx = CourtRenderer.courtToPixel(0.5, isHumanServe ? p1NormZ : p2NormZ);
+  const servePx = CourtRenderer.courtToPixel(0.5, isHumanServe ? p1NormZ : 0.05);
   const ball = document.getElementById('token-ball');
-  
   if (ball) {
-    // Tira a transição para reposicionar a bola sem arrastar
     ball.style.transition = 'none';
     applyTokenCSS('token-ball', servePx, wrap, 5.5, servePx.scale);
-    
-    // Restaura a transição para as rebatidas
-    setTimeout(() => {
-      ball.style.transition = 'top .25s ease-out, left .25s ease-out, width .25s, height .25s';
-    }, 50);
+    setTimeout(() => ball.style.transition = 'all .25s ease-out', 50);
   }
 }
 
@@ -431,16 +399,14 @@ function animateBall(fromId, toId, callback) {
   const toEl = document.getElementById(toId);
   if (!ball || !toEl) { if(callback) callback(); return; }
 
-  // Move a bola CSS para simular o golpe
   ball.style.left = toEl.style.left;
   ball.style.top = toEl.style.top;
   ball.style.width = toEl.style.width; 
   ball.style.height = toEl.style.height;
 
-  // Tempo sincronizado com as transições CSS (.25s) + margem
   setTimeout(() => {
     if (callback) callback();
-  }, 300); 
+  }, 320);
 }
 
 function spawnHitEffect(tokenId) {
@@ -454,14 +420,37 @@ function spawnHitEffect(tokenId) {
   setTimeout(() => flash.remove(), 400);
 }
 
-// ─── FUNÇÕES DE INTERFACE DO USUÁRIO ──────────────────────────
+// Ball styling
+const BALL_SHOT_CLASSES = ['shot-power-low', 'shot-power-medium', 'shot-power-high', 'shot-power-max', 'shot-touch'];
+const BALL_OUTCOME_CLASSES = ['outcome-ace', 'outcome-winner', 'outcome-net', 'outcome-out'];
 
+function styleBallForShot(shotId) {
+  const ball = document.getElementById('token-ball');
+  if (!ball) return;
+  ball.classList.remove(...BALL_SHOT_CLASSES, ...BALL_OUTCOME_CLASSES);
+  const shot = SHOTS[shotId];
+  if (!shot) return;
+  if (shot.id === 'net_dropshot') ball.classList.add('shot-touch');
+  else if (shot.power >= 95) ball.classList.add('shot-power-max');
+  else if (shot.power >= 80) ball.classList.add('shot-power-high');
+  else if (shot.power >= 60) ball.classList.add('shot-power-medium');
+  else ball.classList.add('shot-power-low');
+}
+
+function styleBallForOutcome(outcome) {
+  const ball = document.getElementById('token-ball');
+  if (!ball) return;
+  ball.classList.remove(...BALL_OUTCOME_CLASSES);
+  const map = { ace: 'outcome-ace', winner: 'outcome-winner', net: 'outcome-net', out: 'outcome-out' };
+  if (map[outcome]) ball.classList.add(map[outcome]);
+}
+
+// ─── UI UPDATE ────────────────────────────────────────────────
 function updateUI() {
   if (!engine) return;
   const human = engine.players[engine.humanIndex];
   const ai = engine.players[1 - engine.humanIndex];
   
-  // Placar
   document.getElementById('p1-points').textContent = engine.score.pointDisplay[engine.humanIndex];
   document.getElementById('p2-points').textContent = engine.score.pointDisplay[1 - engine.humanIndex];
   document.getElementById('p1-games').textContent = engine.score.games[engine.humanIndex];
@@ -473,28 +462,19 @@ function updateUI() {
   const phaseBadge = document.getElementById('phase-badge');
   if (phaseBadge) {
     phaseBadge.textContent = engine.phase.replace('_', ' ').toUpperCase();
-    phaseBadge.className = `font-display text-xs px-3 py-1 rounded-full border phase-${engine.phase.split('_')[0]} font-bold`;
   }
 
   document.getElementById('serve-dot-1').style.visibility = (engine.server === human) ? 'visible' : 'hidden';
   document.getElementById('serve-dot-2').style.visibility = (engine.server === ai) ? 'visible' : 'hidden';
 
-  // Barras de Energia e Confiança
   updateBar('p1-energy', human.energy);
   updateBar('p2-energy', ai.energy);
   updateBar('p1-conf', human.confidence);
   updateBar('p2-conf', ai.confidence);
-  
-  // Re-inserir Logs (Narração)
+
   const logContainer = document.getElementById('match-log');
   logContainer.innerHTML = '';
-  engine.currentPointLog.forEach(msg => {
-    let type = 'system';
-    if (msg.includes('ACE!')) type = 'ace';
-    else if (msg.includes('WINNER!')) type = 'winner';
-    else if (msg.includes('erro') || msg.includes('Fora') || msg.includes('NA REDE')) type = 'error';
-    addLog(msg, type);
-  });
+  engine.currentPointLog.forEach(msg => addLog(msg));
 
   if (engine.phase === 'point_end' || engine.matchOver) {
     document.getElementById('btn-continue').classList.remove('hidden');
@@ -533,19 +513,20 @@ function showCards() {
         <span class="success-pill ${s.successChance >= 70 ? 'success-high' : s.successChance >= 45 ? 'success-mid' : 'success-low'}">${s.successChance}%</span>
       </div>
     `;
-    if (s.canAfford) {
-      btn.addEventListener('click', () => handlePlayerShot(s.id));
-    }
+    if (s.canAfford) btn.addEventListener('click', () => handlePlayerShot(s.id));
     container.appendChild(btn);
   });
 }
 
-function addLog(msg, type) {
+function addLog(msg, type = 'system') {
   const logContainer = document.getElementById('match-log');
   if (!logContainer) return;
   const div = document.createElement('div');
-  div.className = `log-line ${type ? 'log-' + type : ''}`;
+  div.className = `log-line log-${type}`;
   div.textContent = msg;
   logContainer.appendChild(div);
   logContainer.scrollTop = logContainer.scrollHeight;
 }
+
+// Chama atualização de textos ao carregar
+document.addEventListener('DOMContentLoaded', () => { updateAllTexts(); });
